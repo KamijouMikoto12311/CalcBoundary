@@ -2,8 +2,12 @@
 import MDAnalysis as mda
 import numba as nb
 import numpy as np
+import pandas as pd
+import os
+import re
 import sys
 import warnings
+from matplotlib import pyplot as plt
 
 np.set_printoptions(threshold=np.inf)
 np.set_printoptions(linewidth=np.inf)
@@ -14,11 +18,9 @@ TIMESTEP = 0.01
 LX = 80
 LY = 80
 LZ = 40
-XML = sys.argv[1]
-DCD = sys.argv[2]
-t = 0
+DCDNAME = "traj.dcd"
 
-SIDELENG = 65  # int(np.sqrt(NHEAD / 2))
+SIDELENG = 66  # Theoretically int(np.sqrt(NHEAD / 2)) however for this val being 73, 66 turns out to have the largest perimeter
 RATE = SIDELENG / LX
 HALFLX = LX / 2
 HALFLY = LY / 2
@@ -72,7 +74,7 @@ def FindC(C, O, O1):
         board[i][0] = board[i][SIDELENG]
         board[i][SIDELENG + 1] = board[i][1]
 
-    #Fill holes
+    # Fill holes
     for i in range(1, SIDELENG + 1):
         for j in range(1, SIDELENG + 1):
             if (
@@ -88,8 +90,8 @@ def FindC(C, O, O1):
     for i in range(SIDELENG + 2):
         board[i][0] = board[i][SIDELENG]
         board[i][SIDELENG + 1] = board[i][1]
-        
-    #Remove single C
+
+    # Remove single C
     for i in range(1, SIDELENG + 1):
         for j in range(1, SIDELENG + 1):
             if (
@@ -126,31 +128,56 @@ def FindBoundary(board):
     return binboard
 
 
-U = mda.Universe(XML, DCD)
-C = U.select_atoms("type C")
-O = U.select_atoms("type O")
-O1 = U.select_atoms("type O1")
+currentdir = os.getcwd()
+wdirs = [
+    f for f in os.listdir(currentdir) if (os.path.isdir(f) and re.match(r"[sr]\d+", f))
+]
+wdirs.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
+if len(wdirs) == 0:
+    raise Exception("Wrong working directory!")
 
-with open("perimeter.dat", "w") as f:
-    f.write(f" t  \tperimeter\n")
 
-for ts in U.trajectory[1:]:
-    t += 1
-    Cxyz = C.positions
-    Oxyz = O.positions
-    O1xyz = O1.positions
-    fold_back(Cxyz)
-    fold_back(Oxyz)
-    fold_back(O1xyz)
+numdir = 0
+for wdir in wdirs:
+    numdir += 1
+    xmls = [
+        xml
+        for xml in os.listdir(os.path.join(currentdir, wdir))
+        if re.match(r"cpt\.\d+\.xml", xml)
+    ]
+    xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
+    xml = os.path.join(wdir, xmls[-1])
+    dcd = os.path.join(wdir, DCDNAME)
+    path_to_perimeter_data = os.path.join(wdir, "perimeter.dat")
 
-    board, trace = FindC(Cxyz, Oxyz, O1xyz)
-    binboard = FindBoundary(board)
-    totperi = np.sum(binboard)
+    U = mda.Universe(xml, dcd)
+    C = U.select_atoms("type C")
+    O = U.select_atoms("type O")
+    O1 = U.select_atoms("type O1")
+    t = 0
 
-    with open("perimeter.dat", "a") as f:
-        f.write(f"{t*TIMESTEP:^4.2f}\t{totperi:^9}\n")
-    if t == 1:
-        with open("binboard.dat", "w") as f:
-            f.write(f"{binboard}")
-        with open("board.dat", "w") as f:
-            f.write(f"{board}")
+    with open(path_to_perimeter_data, "w") as f:
+        f.write(f"{wdir}\n")
+        f.write(f" t  \tperimeter\n")
+
+    for ts in U.trajectory[1:]:
+        t += 1
+        Cxyz = C.positions
+        Oxyz = O.positions
+        O1xyz = O1.positions
+        fold_back(Cxyz)
+        fold_back(Oxyz)
+        fold_back(O1xyz)
+
+        board, trace = FindC(Cxyz, Oxyz, O1xyz)
+        binboard = FindBoundary(board)
+        totperi = np.sum(binboard)
+
+        with open(path_to_perimeter_data, "a") as f:
+            f.write(f"{(numdir-1)*10+t*TIMESTEP:^4.2f}\t{totperi:^9}\n")
+
+    # perimeter_data = pd.read_csv("perimeter.dat", delimiter="\t")
+    # x = perimeter_data.iloc[1:, 0]
+    # y = perimeter_data.iloc[1:, 1]
+    # plt.plot(x, y, linewidth=0.6)
+    # plt.show()
