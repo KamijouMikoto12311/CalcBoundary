@@ -5,29 +5,32 @@ import numpy as np
 import pandas as pd
 import os
 import re
-import sys
 import warnings
 from matplotlib import pyplot as plt
 
-np.set_printoptions(threshold=np.inf)
-np.set_printoptions(linewidth=np.inf)
 
-
-NHEAD = 10658
+NEIGHBOR_DISTANCE = 1.15
+MIN_BOUNDARY_NEIGHBOR = 1
 TIMESTEP = 0.01
 LX = 80
 LY = 80
 LZ = 40
 DCDNAME = "traj.dcd"
 
-SIDELENG = 66  # Theoretically int(np.sqrt(NHEAD / 2)) however for this val being 73, 66 turns out to have the largest perimeter
-RATE = SIDELENG / LX
 HALFLX = LX / 2
 HALFLY = LY / 2
 HALFLZ = LZ / 2
+SQ_NEIGHBOR_DISTANCE = NEIGHBOR_DISTANCE**2
 
 
 warnings.filterwarnings("ignore")
+
+
+@nb.njit
+def empty_int64_list():
+    l = [nb.int64(10)]
+    l.clear()
+    return l
 
 
 @nb.njit
@@ -39,93 +42,60 @@ def fold_back(xyz):
 
 
 @nb.njit
-def FindC(C, O, O1):
-    numC = len(C)
-    board = np.zeros((SIDELENG + 2, SIDELENG + 2))
-    trace = np.zeros((SIDELENG + 2, SIDELENG + 2, 3))
+def Find_Qualified_CH_ind(head, tail1, tail2):
+    Qualified_CH_ind = empty_int64_list()
 
-    for i in range(numC):
-        if C[i][2] > O[i][2] and C[i][2] > O1[i][2]:
-            board[int(RATE * C[i][0]) + 1][int(RATE * C[i][1]) + 1] += 1
-            trace[int(RATE * C[i][0]) + 1][int(RATE * C[i][1]) + 1] = C[i]
+    for i in range(len(head)):
+        if head[i][2] > tail1[i][2] and head[i][2] > tail2[i][2]:
+            Qualified_CH_ind.append(i)
 
-    # Apply periodic boundary condition (partly) to make it easier to find the boundary
-    board[0] = board[SIDELENG]
-    board[SIDELENG + 1] = board[1]
-    for i in range(SIDELENG + 2):
-        board[i][0] = board[i][SIDELENG]
-        board[i][SIDELENG + 1] = board[i][1]
-
-    # Due to board fit, for a lattice which has more than one particle, coarsen by add 1 around it
-    for i in range(1, SIDELENG + 1):
-        for j in range(1, SIDELENG + 1):
-            if board[i][j] > 1:
-                board[i - 1][j - 1] += int(board[i - 1][j - 1] == 0)
-                board[i - 1][j] += int(board[i - 1][j] == 0)
-                board[i - 1][j + 1] += int(board[i - 1][j + 1] == 0)
-                board[i][j - 1] += int(board[i][j - 1] == 0)
-                board[i][j + 1] += int(board[i][j + 1] == 0)
-                board[i + 1][j - 1] += int(board[i + 1][j - 1] == 0)
-                board[i + 1][j] += int(board[i + 1][j] == 0)
-                board[i + 1][j + 1] += int(board[i + 1][j + 1] == 0)
-    board[0] = board[SIDELENG]
-    board[SIDELENG + 1] = board[1]
-    for i in range(SIDELENG + 2):
-        board[i][0] = board[i][SIDELENG]
-        board[i][SIDELENG + 1] = board[i][1]
-
-    # Fill holes
-    for i in range(1, SIDELENG + 1):
-        for j in range(1, SIDELENG + 1):
-            if (
-                board[i][j] == 0
-                and board[i - 1][j] != 0
-                and board[i + 1][j] != 0
-                and board[i][j - 1] != 0
-                and board[i][j + 1] != 0
-            ):
-                board[i][j] = 1
-    board[0] = board[SIDELENG]
-    board[SIDELENG + 1] = board[1]
-    for i in range(SIDELENG + 2):
-        board[i][0] = board[i][SIDELENG]
-        board[i][SIDELENG + 1] = board[i][1]
-
-    # Remove single C
-    for i in range(1, SIDELENG + 1):
-        for j in range(1, SIDELENG + 1):
-            if (
-                board[i][j] == 1
-                and board[i - 1][j] == 0
-                and board[i + 1][j] == 0
-                and board[i][j - 1] == 0
-                and board[i][j + 1] == 0
-            ):
-                board[i][j] = 0
-    board[0] = board[SIDELENG]
-    board[SIDELENG + 1] = board[1]
-    for i in range(SIDELENG + 2):
-        board[i][0] = board[i][SIDELENG]
-        board[i][SIDELENG + 1] = board[i][1]
-
-    return board, trace
+    return Qualified_CH_ind
 
 
 @nb.njit
-def FindBoundary(board):
-    binboard = np.zeros((SIDELENG, SIDELENG))
+def FindBoundary(Q_Cxyz, Q_Hxyz):
+    count_C_neighbor_H = np.zeros(len(Q_Cxyz))
 
-    for i in range(1, SIDELENG + 1):
-        for j in range(1, SIDELENG + 1):
-            if board[i][j] >= 1 and (
-                board[i - 1][j] == 0
-                or board[i + 1][j] == 0
-                or board[i][j - 1] == 0
-                or board[i][j + 1] == 0
-            ):
-                binboard[i - 1][j - 1] = 1
+    for i in range(len(Q_Cxyz)):
+        for j in range(len(Q_Hxyz)):
+            if (Q_Cxyz[i][0] - Q_Hxyz[j][0]) ** 2 + (
+                Q_Cxyz[i][1] - Q_Hxyz[j][1]
+            ) ** 2 + (Q_Cxyz[i][2] - Q_Hxyz[j][2]) ** 2 < SQ_NEIGHBOR_DISTANCE:
+                count_C_neighbor_H[i] += 1
 
-    return binboard
+    Boundary_C_bool = [
+        True if count >= MIN_BOUNDARY_NEIGHBOR else False
+        for count in count_C_neighbor_H
+    ]
+    Boundary_C = [
+        element for element, bool_value in zip(Q_Cxyz, Boundary_C_bool) if bool_value
+    ]
+
+    return Boundary_C
+
+
+@nb.njit
+def Calc_Perimeter(Boundary_C):
+    perimeter = 0
+    num_Boundary_C = len(Boundary_C)
+
+    for i in range(num_Boundary_C):
+        count_C_neighbor_C = 0
+        perimeter_i = 0
+
+        for j in range(num_Boundary_C):
+            sq_distance = (
+                (Boundary_C[i][0] - Boundary_C[j][0]) ** 2
+                + (Boundary_C[i][1] - Boundary_C[j][1]) ** 2
+                + (Boundary_C[i][2] - Boundary_C[j][2]) ** 2
+            )
+            if sq_distance < SQ_NEIGHBOR_DISTANCE:
+                perimeter_i += np.sqrt(sq_distance)
+                count_C_neighbor_C += 1
+
+        perimeter += perimeter_i / count_C_neighbor_C
+
+    return perimeter
 
 
 currentdir = os.getcwd()
@@ -135,7 +105,6 @@ wdirs = [
 wdirs.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
 if len(wdirs) == 0:
     raise Exception("Wrong working directory!")
-
 
 numdir = 0
 for wdir in wdirs:
@@ -148,33 +117,41 @@ for wdir in wdirs:
     xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
     xml = os.path.join(wdir, xmls[-1])
     dcd = os.path.join(wdir, DCDNAME)
-    path_to_perimeter_data = os.path.join(wdir, "perimeter.dat")
+    path_to_perimeter_data = os.path.join(wdir, "perimeterByDistance.dat")
 
     U = mda.Universe(xml, dcd)
     C = U.select_atoms("type C")
     O = U.select_atoms("type O")
     O1 = U.select_atoms("type O1")
+    H = U.select_atoms("type H")
+    T = U.select_atoms("type T")
+    T1 = U.select_atoms("type T1")
     t = 0
 
     with open(path_to_perimeter_data, "w") as f:
-        f.write(f"{wdir}\n")
-        f.write(f" t  \tperimeter\n")
+        f.write("t\tperimeter\n")
 
     for ts in U.trajectory[1:]:
         t += 1
         Cxyz = C.positions
         Oxyz = O.positions
         O1xyz = O1.positions
+        Hxyz = H.positions
+        Txyz = T.positions
+        T1xyz = T1.positions
         fold_back(Cxyz)
         fold_back(Oxyz)
         fold_back(O1xyz)
-
-        board, trace = FindC(Cxyz, Oxyz, O1xyz)
-        binboard = FindBoundary(board)
-        totperi = np.sum(binboard)
+        fold_back(Hxyz)
+        fold_back(Txyz)
+        fold_back(T1xyz)
+        Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
+        Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
+        Boundary_C = FindBoundary(Qualified_C, Qualified_H)
+        perimeter = Calc_Perimeter(Boundary_C)
 
         with open(path_to_perimeter_data, "a") as f:
-            f.write(f"{(numdir-1)*10+t*TIMESTEP:^4.2f}\t{totperi:^9}\n")
+            f.write(f"{(numdir-1)*10+t*TIMESTEP}\t{perimeter:.4f}\n")
 
     # perimeter_data = pd.read_csv("perimeter.dat", delimiter="\t")
     # x = perimeter_data.iloc[1:, 0]
