@@ -2,25 +2,25 @@
 import MDAnalysis as mda
 import numba as nb
 import numpy as np
-import pandas as pd
+from scipy.spatial import ConvexHull
 import os
 import re
+import sys
 import warnings
-from matplotlib import pyplot as plt
 
 
-NEIGHBOR_DISTANCE = 1.15
-MIN_BOUNDARY_NEIGHBOR = 1
+DISTANCE_THRESHOLD = 1.15
 TIMESTEP = 0.01
 LX = 80
 LY = 80
 LZ = 40
 DCDNAME = "traj.dcd"
 
+xml = sys.argv[1]
+dcd = sys.argv[2]
 HALFLX = LX / 2
 HALFLY = LY / 2
 HALFLZ = LZ / 2
-SQ_NEIGHBOR_DISTANCE = NEIGHBOR_DISTANCE**2
 
 
 warnings.filterwarnings("ignore")
@@ -35,14 +35,14 @@ def empty_int64_list():
 
 @nb.njit
 def fold_back(xyz):
-    for i in range(0, len(xyz)):
-        xyz[i][0] = (xyz[i][0] + HALFLX) % LX
-        xyz[i][1] = (xyz[i][1] + HALFLY) % LY
-        xyz[i][2] = (xyz[i][2] + HALFLZ) % LZ
+    for i in range(len(xyz)):
+        xyz[i][0] = (xyz[i][0] + HALFLX) % LX - HALFLX
+        xyz[i][1] = (xyz[i][1] + HALFLY) % LY - HALFLY
+        xyz[i][2] = (xyz[i][2] + HALFLZ) % LZ - HALFLZ
 
 
 @nb.njit
-def Find_Qualified_CH_ind(head, tail1, tail2):
+def find_qualified_CH_ind(head, tail1, tail2):
     Qualified_CH_ind = empty_int64_list()
 
     for i in range(len(head)):
@@ -53,108 +53,73 @@ def Find_Qualified_CH_ind(head, tail1, tail2):
 
 
 @nb.njit
-def FindBoundary(Q_Cxyz, Q_Hxyz):
-    count_C_neighbor_H = np.zeros(len(Q_Cxyz))
+def group_points_into_convex_polygons(points):
+    grouped_polygons = []
 
-    for i in range(len(Q_Cxyz)):
-        for j in range(len(Q_Hxyz)):
-            if (Q_Cxyz[i][0] - Q_Hxyz[j][0]) ** 2 + (
-                Q_Cxyz[i][1] - Q_Hxyz[j][1]
-            ) ** 2 + (Q_Cxyz[i][2] - Q_Hxyz[j][2]) ** 2 < SQ_NEIGHBOR_DISTANCE:
-                count_C_neighbor_H[i] += 1
+    assigned = np.zeros(len(points))
 
-    Boundary_C_bool = [
-        True if count >= MIN_BOUNDARY_NEIGHBOR else False
-        for count in count_C_neighbor_H
-    ]
-    Boundary_C = [
-        element for element, bool_value in zip(Q_Cxyz, Boundary_C_bool) if bool_value
-    ]
+    for i in range(len(points)):
+        if not assigned[i]:
+            current_polygon = [points[i]]
+            assigned[i] = True
 
-    return Boundary_C
+            for j in range(len(points)):
+                distancesq = (points[i][0] - points[j][0]) ** 2 + (
+                    points[i][1] - points[j][1]
+                ) ** 2
+
+                if not assigned[j] and distancesq < DISTANCE_THRESHOLD**2:
+                    current_polygon.append(points[j])
+                    assigned[j] = True
+
+            grouped_polygons.append(current_polygon)
+
+    return grouped_polygons
 
 
 @nb.njit
-def Calc_Perimeter(Boundary_C):
-    perimeter = 0
-    num_Boundary_C = len(Boundary_C)
+def calc_perimeter(qualified_Cxy, all_vertices):
+    perimeter = 0.0
 
-    for i in range(num_Boundary_C):
-        count_C_neighbor_C = 0
-        perimeter_i = 0
-
-        for j in range(num_Boundary_C):
-            sq_distance = (
-                (Boundary_C[i][0] - Boundary_C[j][0]) ** 2
-                + (Boundary_C[i][1] - Boundary_C[j][1]) ** 2
-                + (Boundary_C[i][2] - Boundary_C[j][2]) ** 2
-            )
-            if sq_distance < SQ_NEIGHBOR_DISTANCE:
-                perimeter_i += np.sqrt(sq_distance)
-                count_C_neighbor_C += 1
-
-        perimeter += perimeter_i / count_C_neighbor_C
+    for i in range(len(all_vertices)):
+        j = (i + 1) % len(all_vertices)
+        perimeter += np.sqrt(
+            (qualified_Cxy[all_vertices[i]][0] - qualified_Cxy[all_vertices[j]][0]) ** 2
+            + (qualified_Cxy[all_vertices[i]][1] - qualified_Cxy[all_vertices[j]][1])
+            ** 2
+        )
 
     return perimeter
 
 
-currentdir = os.getcwd()
-wdirs = [
-    f for f in os.listdir(currentdir) if (os.path.isdir(f) and re.match(r"[sr]\d+", f))
-]
-wdirs.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
-if len(wdirs) == 0:
-    raise Exception("Wrong working directory!")
+U = mda.Universe(xml, dcd)
+C = U.select_atoms("type C")
+O = U.select_atoms("type O")
+O1 = U.select_atoms("type O1")
+t = 0
 
-numdir = 0
-for wdir in wdirs:
-    numdir += 1
-    xmls = [
-        xml
-        for xml in os.listdir(os.path.join(currentdir, wdir))
-        if re.match(r"cpt\.\d+\.xml", xml)
-    ]
-    xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
-    xml = os.path.join(wdir, xmls[-1])
-    dcd = os.path.join(wdir, DCDNAME)
-    path_to_perimeter_data = os.path.join(wdir, "perimeterByDistance.dat")
+with open("perimeterByConvexHull.dat", "w") as f:
+    f.write("t\tperimeter\n")
 
-    U = mda.Universe(xml, dcd)
-    C = U.select_atoms("type C")
-    O = U.select_atoms("type O")
-    O1 = U.select_atoms("type O1")
-    H = U.select_atoms("type H")
-    T = U.select_atoms("type T")
-    T1 = U.select_atoms("type T1")
-    t = 0
+for ts in U.trajectory[1:]:
+    t += 1
+    total_perimeter = 0
+    Cxyz = C.positions
+    Oxyz = O.positions
+    O1xyz = O1.positions
+    fold_back(Cxyz)
+    fold_back(Oxyz)
+    fold_back(O1xyz)
 
-    with open(path_to_perimeter_data, "w") as f:
-        f.write("t\tperimeter\n")
+    qualified_C = Cxyz[find_qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
+    qualified_Cxy = [i[:2] for i in qualified_C]
+    clusters = group_points_into_convex_polygons(qualified_Cxy)
 
-    for ts in U.trajectory[1:]:
-        t += 1
-        Cxyz = C.positions
-        Oxyz = O.positions
-        O1xyz = O1.positions
-        Hxyz = H.positions
-        Txyz = T.positions
-        T1xyz = T1.positions
-        fold_back(Cxyz)
-        fold_back(Oxyz)
-        fold_back(O1xyz)
-        fold_back(Hxyz)
-        fold_back(Txyz)
-        fold_back(T1xyz)
-        Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
-        Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
-        Boundary_C = FindBoundary(Qualified_C, Qualified_H)
-        perimeter = Calc_Perimeter(Boundary_C)
+    for cluster in clusters:
+        if len(cluster) > 3:
+            hull = ConvexHull(cluster)
+            vertices = hull.vertices
+            total_perimeter += calc_perimeter(qualified_Cxy, vertices)
 
-        with open(path_to_perimeter_data, "a") as f:
-            f.write(f"{(numdir-1)*10+t*TIMESTEP}\t{perimeter:.4f}\n")
-
-    # perimeter_data = pd.read_csv("perimeter.dat", delimiter="\t")
-    # x = perimeter_data.iloc[1:, 0]
-    # y = perimeter_data.iloc[1:, 1]
-    # plt.plot(x, y, linewidth=0.6)
-    # plt.show()
+    with open("perimeterByConvexHull.dat", "a") as f:
+        f.write(f"{t}\t{total_perimeter}\n")
