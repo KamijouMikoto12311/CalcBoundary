@@ -2,11 +2,9 @@
 import MDAnalysis as mda
 import numba as nb
 import numpy as np
-import pandas as pd
 import os
 import re
 import warnings
-from matplotlib import pyplot as plt
 
 
 NEIGHBOR_DISTANCE = 1.15
@@ -21,6 +19,7 @@ HALFLX = LX / 2
 HALFLY = LY / 2
 HALFLZ = LZ / 2
 SQ_NEIGHBOR_DISTANCE = NEIGHBOR_DISTANCE**2
+box_size = np.array([LX, LY, LZ], dtype=float)
 
 
 warnings.filterwarnings("ignore")
@@ -42,6 +41,15 @@ def fold_back(xyz):
 
 
 @nb.njit
+def apply_min_img(r, box_size):
+    for dim in range(3):
+        if r[dim] > 0.5 * box_size[dim]:
+            r[dim] -= box_size[dim]
+        elif r[dim] < -0.5 * box_size[dim]:
+            r[dim] += box_size[dim]
+
+
+@nb.njit
 def Find_Qualified_CH_ind(head, tail1, tail2):
     Qualified_CH_ind = empty_int64_list()
 
@@ -58,9 +66,13 @@ def FindBoundary(Q_Cxyz, Q_Hxyz):
 
     for i in range(len(Q_Cxyz)):
         for j in range(len(Q_Hxyz)):
-            if (Q_Cxyz[i][0] - Q_Hxyz[j][0]) ** 2 + (
-                Q_Cxyz[i][1] - Q_Hxyz[j][1]
-            ) ** 2 + (Q_Cxyz[i][2] - Q_Hxyz[j][2]) ** 2 < SQ_NEIGHBOR_DISTANCE:
+            r = np.sqrt(
+                (Q_Cxyz[i][0] - Q_Hxyz[j][0]) ** 2
+                + (Q_Cxyz[i][1] - Q_Hxyz[j][1]) ** 2
+                + (Q_Cxyz[i][2] - Q_Hxyz[j][2]) ** 2
+            )
+            apply_min_img(r, box_size)
+            if r < NEIGHBOR_DISTANCE:
                 count_C_neighbor_H[i] += 1
 
     Boundary_C_bool = [
@@ -108,7 +120,6 @@ if len(wdirs) == 0:
 
 numdir = 0
 for wdir in wdirs:
-    numdir += 1
     xmls = [
         xml
         for xml in os.listdir(os.path.join(currentdir, wdir))
@@ -126,7 +137,7 @@ for wdir in wdirs:
     H = U.select_atoms("type H")
     T = U.select_atoms("type T")
     T1 = U.select_atoms("type T1")
-    t = 0
+    t = 1000 * numdir
 
     with open(path_to_perimeter_data, "w") as f:
         f.write("t\tperimeter\n")
@@ -151,10 +162,6 @@ for wdir in wdirs:
         perimeter = Calc_Perimeter(Boundary_C)
 
         with open(path_to_perimeter_data, "a") as f:
-            f.write(f"{(numdir-1)*10+t*TIMESTEP}\t{perimeter:.4f}\n")
+            f.write(f"{t*TIMESTEP}\t{perimeter:.4f}\n")
 
-    # perimeter_data = pd.read_csv("perimeter.dat", delimiter="\t")
-    # x = perimeter_data.iloc[1:, 0]
-    # y = perimeter_data.iloc[1:, 1]
-    # plt.plot(x, y, linewidth=0.6)
-    # plt.show()
+    numdir += 1
