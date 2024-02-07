@@ -20,6 +20,7 @@ HALFLY = LY / 2
 HALFLZ = LZ / 2
 SQ_NEIGHBOR_DISTANCE = NEIGHBOR_DISTANCE**2
 box_size = np.array([LX, LY, LZ], dtype=float)
+half_box_size = np.array([HALFLX, HALFLY, HALFLZ], dtype=float)
 
 
 warnings.filterwarnings("ignore")
@@ -41,11 +42,11 @@ def fold_back(xyz):
 
 
 @nb.njit
-def apply_min_img(r, box_size):
+def apply_min_img(r, box_size, half_box_size):
     for dim in range(3):
-        if r[dim] > 0.5 * box_size[dim]:
+        if r[dim] > half_box_size[dim]:
             r[dim] -= box_size[dim]
-        elif r[dim] < -0.5 * box_size[dim]:
+        elif r[dim] < -half_box_size[dim]:
             r[dim] += box_size[dim]
 
 
@@ -66,13 +67,10 @@ def FindBoundary(Q_Cxyz, Q_Hxyz):
 
     for i in range(len(Q_Cxyz)):
         for j in range(len(Q_Hxyz)):
-            r = np.sqrt(
-                (Q_Cxyz[i][0] - Q_Hxyz[j][0]) ** 2
-                + (Q_Cxyz[i][1] - Q_Hxyz[j][1]) ** 2
-                + (Q_Cxyz[i][2] - Q_Hxyz[j][2]) ** 2
-            )
-            apply_min_img(r, box_size)
-            if r < NEIGHBOR_DISTANCE:
+            r = Q_Cxyz[i] - Q_Hxyz[j]
+            apply_min_img(r, box_size, half_box_size)
+            distance = np.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2)
+            if distance < NEIGHBOR_DISTANCE:
                 count_C_neighbor_H[i] += 1
 
     Boundary_C_bool = [
@@ -162,6 +160,6 @@ for wdir in wdirs:
         perimeter = Calc_Perimeter(Boundary_C)
 
         with open(path_to_perimeter_data, "a") as f:
-            f.write(f"{t*TIMESTEP}\t{perimeter:.4f}\n")
+            f.write(f"{t*TIMESTEP:.2f}\t{perimeter:.4f}\n")
 
     numdir += 1
