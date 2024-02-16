@@ -94,11 +94,9 @@ def Calc_Perimeter(Boundary_C):
         perimeter_i = 0
 
         for j in range(num_Boundary_C):
-            sq_distance = (
-                (Boundary_C[i][0] - Boundary_C[j][0]) ** 2
-                + (Boundary_C[i][1] - Boundary_C[j][1]) ** 2
-                + (Boundary_C[i][2] - Boundary_C[j][2]) ** 2
-            )
+            r = Boundary_C[i] - Boundary_C[j]
+            apply_min_img(r, box_size, half_box_size)
+            sq_distance = r[0] ** 2 + r[1] ** 2 + r[2] ** 2
             if sq_distance < SQ_NEIGHBOR_DISTANCE:
                 perimeter_i += np.sqrt(sq_distance)
                 count_C_neighbor_C += 1
@@ -124,9 +122,9 @@ for wdir in wdirs:
         if re.match(r"cpt\.\d+\.xml", xml)
     ]
     xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
-    xml = os.path.join(wdir, xmls[-1])
-    dcd = os.path.join(wdir, DCDNAME)
-    path_to_perimeter_data = os.path.join(wdir, "perimeterByDistance.dat")
+    xml = os.path.join(currentdir, wdir, xmls[-1])
+    dcd = os.path.join(currentdir, wdir, DCDNAME)
+    path_to_perimeter_data = os.path.join(currentdir, wdir, "perimeterByDistance.dat")
 
     U = mda.Universe(xml, dcd)
     C = U.select_atoms("type C")
@@ -156,7 +154,7 @@ for wdir in wdirs:
         fold_back(T1xyz)
         Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
         Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
-        Boundary_C = FindBoundary(Qualified_C, Qualified_H)
+        Boundary_C = np.array(FindBoundary(Qualified_C, Qualified_H))
         perimeter = Calc_Perimeter(Boundary_C)
 
         with open(path_to_perimeter_data, "a") as f:
