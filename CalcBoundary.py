@@ -1,7 +1,7 @@
-#!/opt/homebrew/bin/
 import MDAnalysis as mda
 import numba as nb
 import numpy as np
+import xml.etree.ElementTree as et
 import os
 import re
 import warnings
@@ -10,17 +10,9 @@ import warnings
 NEIGHBOR_DISTANCE = 1.15
 MIN_BOUNDARY_NEIGHBOR = 1
 TIMESTEP = 0.01
-LX = 80
-LY = 80
-LZ = 40
 DCDNAME = "traj.dcd"
 
-HALFLX = LX / 2
-HALFLY = LY / 2
-HALFLZ = LZ / 2
 SQ_NEIGHBOR_DISTANCE = NEIGHBOR_DISTANCE**2
-box_size = np.array([LX, LY, LZ], dtype=float)
-half_box_size = np.array([HALFLX, HALFLY, HALFLZ], dtype=float)
 
 
 warnings.filterwarnings("ignore")
@@ -34,11 +26,10 @@ def empty_int64_list():
 
 
 @nb.njit
-def fold_back(xyz):
-    for i in range(0, len(xyz)):
-        xyz[i][0] = (xyz[i][0] + HALFLX) % LX
-        xyz[i][1] = (xyz[i][1] + HALFLY) % LY
-        xyz[i][2] = (xyz[i][2] + HALFLZ) % LZ
+def fold_back(xyz, box_size, half_box_size):
+    for i in range(len(xyz)):
+        for dim in range(3):
+            xyz[i][dim] = (xyz[i][dim] + half_box_size[dim]) % box_size[dim]
 
 
 @nb.njit
@@ -126,6 +117,15 @@ for wdir in wdirs:
     dcd = os.path.join(currentdir, wdir, DCDNAME)
     path_to_perimeter_data = os.path.join(currentdir, wdir, "perimeterByDistance.dat")
 
+    tree = et.parse(xml)
+    root = tree.getroot()
+    box = root.find(".//box")
+    lx = float(box.get("lx"))
+    ly = float(box.get("ly"))
+    lz = float(box.get("lz"))
+    box_size = np.array([lx, ly, lz], dtype=float)
+    half_box_size = np.array([0.5 * lx, 0.5 * ly, 0.5 * lz], dtype=float)
+
     U = mda.Universe(xml, dcd)
     C = U.select_atoms("type C")
     O = U.select_atoms("type O")
@@ -146,12 +146,12 @@ for wdir in wdirs:
         Hxyz = H.positions
         Txyz = T.positions
         T1xyz = T1.positions
-        fold_back(Cxyz)
-        fold_back(Oxyz)
-        fold_back(O1xyz)
-        fold_back(Hxyz)
-        fold_back(Txyz)
-        fold_back(T1xyz)
+        fold_back(Cxyz, box_size, half_box_size)
+        fold_back(Oxyz, box_size, half_box_size)
+        fold_back(O1xyz, box_size, half_box_size)
+        fold_back(Hxyz, box_size, half_box_size)
+        fold_back(Txyz, box_size, half_box_size)
+        fold_back(T1xyz, box_size, half_box_size)
         Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
         Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
         Boundary_C = np.array(FindBoundary(Qualified_C, Qualified_H))
