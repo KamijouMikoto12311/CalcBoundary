@@ -54,25 +54,26 @@ def Find_Qualified_CH_ind(head, tail1, tail2):
 
 @nb.njit
 def FindBoundary(Q_Cxyz, Q_Hxyz):
-    count_C_neighbor_H = np.zeros(len(Q_Cxyz))
+    count_C_neighbor_H = np.zeros(Q_Cxyz.shape[0], dtype=nb.int64)
+    boundary_C_ind = np.zeros(Q_Cxyz.shape[0], dtype=nb.int64)
+    found = 0
 
     for i in range(len(Q_Cxyz)):
         for j in range(len(Q_Hxyz)):
             r = Q_Cxyz[i] - Q_Hxyz[j]
             apply_min_img(r, box_size, half_box_size)
             distance = np.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2)
+
             if distance < NEIGHBOR_DISTANCE:
                 count_C_neighbor_H[i] += 1
 
-    Boundary_C_bool = [
-        True if count >= MIN_BOUNDARY_NEIGHBOR else False
-        for count in count_C_neighbor_H
-    ]
-    Boundary_C = [
-        element for element, bool_value in zip(Q_Cxyz, Boundary_C_bool) if bool_value
-    ]
+            if count_C_neighbor_H[i] >= MIN_BOUNDARY_NEIGHBOR:
+                boundary_C_ind[found] = i
+                found += 1
+                break
 
-    return Boundary_C
+    return_C_ind = boundary_C_ind[: found]
+    return return_C_ind
 
 
 @nb.njit
@@ -152,9 +153,9 @@ for wdir in wdirs:
         fold_back(Hxyz, box_size, half_box_size)
         fold_back(Txyz, box_size, half_box_size)
         fold_back(T1xyz, box_size, half_box_size)
-        Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
-        Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
-        Boundary_C = np.array(FindBoundary(Qualified_C, Qualified_H))
+        Qualified_C = np.array(Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)])
+        Qualified_H = np.array(Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)])
+        Boundary_C = np.array(Cxyz[FindBoundary(Qualified_C, Qualified_H)])
         perimeter = Calc_Perimeter(Boundary_C)
 
         with open(path_to_perimeter_data, "a") as f:
