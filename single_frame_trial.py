@@ -42,6 +42,15 @@ def apply_min_img(r):
 
 
 @nb.njit
+def apply_min_img_2D(r):
+    for dim in range(2):
+        if r[dim] > half_box_size[dim]:
+            r[dim] -= box_size[dim]
+        elif r[dim] < -half_box_size[dim]:
+            r[dim] += box_size[dim]
+
+
+@nb.njit
 def Find_Qualified_CH_ind(head, tail1, tail2):
     Qualified_CH_ind = empty_int64_list()
 
@@ -53,36 +62,19 @@ def Find_Qualified_CH_ind(head, tail1, tail2):
 
 
 @nb.njit
-def find_neighbors(dataset, point, eps):
-    num_neighbors = 0
+def distance_matrix(points):
+    num_points = len(points)
+    matrix = np.zeros((num_points, num_points))
 
-    for other_point in dataset:
-        r = other_point - point
-        apply_min_img(r)
-        distance = np.sqrt(np.sum(r**2))
-        if distance < eps:
-            num_neighbors += 1
+    for i in range(num_points):
+        for j in range(i + 1, num_points):
+            r = points[i] - points[j]
+            apply_min_img_2D(r)
+            distance = np.sqrt(np.sum(r**2))
+            matrix[i, j] = distance
+            matrix[j, i] = distance
 
-    return num_neighbors
-
-
-@nb.njit
-def core_border_points_index(points, eps, min_samples):
-    core_index = np.zeros(len(points), dtype=nb.int64)
-    border_index = np.zeros(len(points), dtype=nb.int64)
-    core_found, border_found = 0, 0
-
-    for i in range(len(points)):
-        point = points[i]
-        num_neighbors = find_neighbors(points, point, eps)
-        if num_neighbors >= min_samples:
-            core_index[core_found] = i
-            core_found += 1
-        else:
-            border_index[border_found] = i
-            border_found += 1
-
-    return core_index[:core_found], border_index[:border_found]
+    return matrix
 
 
 currentdir = os.getcwd()
@@ -144,24 +136,28 @@ for wdir in wdirs:
     #     if point[1] > 40:
     #         point[1] -= 80
 
-    dbscan = DBSCAN(eps=EPS, min_samples=MINPTS)
-    dbscan.fit(qualified_C_xy)
+    dist_matrix = distance_matrix(qualified_C_xy)
+
+    dbscan = DBSCAN(eps=EPS, min_samples=MINPTS, metric="precomputed")
+    clusters = dbscan.fit_predict(dist_matrix)
 
     label_set = set(dbscan.labels_)
     label_set.remove(-1)
+    core_indices = dbscan.core_sample_indices_
 
-    index_of_points = np.where(dbscan.labels_ != -1)[0]
-    points = qualified_C_xy[index_of_points]
-    core_index, border_index = core_border_points_index(
-        points, eps=EPS, min_samples=MINPTS
-    )
-    core_points = points[core_index]
-    border_points = points[border_index]
+    for label in label_set:
+        index_of_points = np.where(dbscan.labels_ == label)[0]
 
-    plt.scatter(points[:, 0], points[:, 1], s=5)
+        core_index = np.intersect1d(index_of_points, core_indices)
+        border_index = np.setdiff1d(index_of_points, core_index)
 
-    plt.scatter(core_points[:, 0], core_points[:, 1], c="green", s=5)
-    plt.scatter(border_points[:, 0], border_points[:, 1], c="blue", s=5)
+        core_points = qualified_C_xy[core_index]
+        border_points = qualified_C_xy[border_index]
+
+        # plt.scatter(points[:, 0], points[:, 1], s=5)
+
+        plt.scatter(core_points[:, 0], core_points[:, 1], c="orange", s=5)
+        plt.scatter(border_points[:, 0], border_points[:, 1], c="blue", s=5)
 
     plt.axvline(x=0, color="black", linewidth=0.8)
     plt.axvline(x=80, color="black", linewidth=0.8)
