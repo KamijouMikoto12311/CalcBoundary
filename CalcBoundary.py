@@ -2,6 +2,7 @@ import MDAnalysis as mda
 import numba as nb
 import numpy as np
 import xml.etree.ElementTree as et
+from sklearn.cluster import DBSCAN
 import os
 import re
 import warnings
@@ -50,53 +51,6 @@ def Find_Qualified_CH_ind(head, tail1, tail2):
             Qualified_CH_ind.append(i)
 
     return np.array(Qualified_CH_ind)
-
-
-@nb.njit
-def FindBoundary(Q_Cxyz, Q_Hxyz):
-    count_C_neighbor_H = np.zeros(Q_Cxyz.shape[0], dtype=nb.int64)
-    boundary_C_ind = np.zeros(Q_Cxyz.shape[0], dtype=nb.int64)
-    found = 0
-
-    for i in range(len(Q_Cxyz)):
-        for j in range(len(Q_Hxyz)):
-            r = Q_Cxyz[i] - Q_Hxyz[j]
-            apply_min_img(r, box_size, half_box_size)
-            distance = np.sqrt(r[0] ** 2 + r[1] ** 2 + r[2] ** 2)
-
-            if distance < NEIGHBOR_DISTANCE:
-                count_C_neighbor_H[i] += 1
-
-            if count_C_neighbor_H[i] >= MIN_BOUNDARY_NEIGHBOR:
-                boundary_C_ind[found] = i
-                found += 1
-                break
-
-    return_C_ind = boundary_C_ind[:found]
-    return return_C_ind
-
-
-@nb.njit
-def Calc_Perimeter(Boundary_C):
-    perimeter = 0
-    num_Boundary_C = len(Boundary_C)
-
-    for i in range(num_Boundary_C):
-        count_C_neighbor_C = 0
-        perimeter_i = 0
-
-        for j in range(num_Boundary_C):
-            r = Boundary_C[i] - Boundary_C[j]
-            apply_min_img(r, box_size, half_box_size)
-            sq_distance = r[0] ** 2 + r[1] ** 2 + r[2] ** 2
-            if sq_distance < SQ_NEIGHBOR_DISTANCE:
-                perimeter_i += np.sqrt(sq_distance)
-                count_C_neighbor_C += 1
-                
-        if count_C_neighbor_C:
-            perimeter += perimeter_i / count_C_neighbor_C
-
-    return perimeter
 
 
 currentdir = os.getcwd()
@@ -155,9 +109,20 @@ for wdir in wdirs:
         fold_back(Txyz, box_size, half_box_size)
         fold_back(T1xyz, box_size, half_box_size)
         Qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
-        Qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
-        Boundary_C = np.array(Qualified_C[FindBoundary(Qualified_C, Qualified_H)])
-        perimeter = Calc_Perimeter(Boundary_C)
+        qualified_C_xy = Qualified_C[:, :2]
+
+        dbscan = DBSCAN(eps=1.2, min_samples=10)
+        dbscan.fit(qualified_C_xy)
+        core_indices = dbscan.core_sample_indices_
+
+        for label in set(dbscan.labels_):
+            index_of_points = np.where(dbscan.labels_ == label)[0]
+            index_of_core_points = np.intersect1d(index_of_points, core_indices)
+            index_of_border_points = np.setdiff1d(index_of_points, index_of_core_points)
+            
+            
+            
+            
 
         with open(path_to_perimeter_data, "a") as f:
             f.write(f"{t*TIMESTEP:.2f}\t{perimeter:.4f}\n")
