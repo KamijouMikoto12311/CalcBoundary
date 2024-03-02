@@ -77,6 +77,28 @@ def distance_matrix(points):
     return matrix
 
 
+@nb.njit
+def find_H_in_C_cluster(c_xy, h_xy):
+    found = 0
+    inside_h_index = np.zeros(len(h_xy), dtype=nb.int64)
+
+    for i in range(len(h_xy)):
+        neighbor_count = 0
+
+        for j in range(len(c_xy)):
+            r = h_xy[i] - c_xy[j]
+            apply_min_img_2D(r)
+            distance = np.sqrt(np.sum(r**2))
+            if distance < EPS:
+                neighbor_count += 1
+
+        if neighbor_count > MINPTS:
+            inside_h_index[found] = i
+            found += 1
+
+    return inside_h_index[:found]
+
+
 currentdir = os.getcwd()
 wdirs = [
     f for f in os.listdir(currentdir) if (os.path.isdir(f) and re.match(r"[sr]\d+", f))
@@ -130,7 +152,10 @@ for wdir in wdirs:
     fold_back(Txyz, box_size, half_box_size)
     fold_back(T1xyz, box_size, half_box_size)
     qualified_C = Cxyz[Find_Qualified_CH_ind(Cxyz, Oxyz, O1xyz)]
+    qualified_H = Hxyz[Find_Qualified_CH_ind(Hxyz, Txyz, T1xyz)]
+
     qualified_C_xy = qualified_C[:, :2]
+    qualified_H_xy = qualified_H[:, :2]
 
     # for point in qualified_C_xy:
     #     if point[1] > 40:
@@ -147,17 +172,32 @@ for wdir in wdirs:
 
     for label in label_set:
         index_of_points = np.where(dbscan.labels_ == label)[0]
-
         core_index = np.intersect1d(index_of_points, core_indices)
         border_index = np.setdiff1d(index_of_points, core_index)
 
+        points = qualified_C_xy[index_of_points]
         core_points = qualified_C_xy[core_index]
         border_points = qualified_C_xy[border_index]
 
+        inside_H_index = find_H_in_C_cluster(points, qualified_H_xy)
+        inside_H = qualified_H_xy[inside_H_index]
+
+        new_cluster = np.append(points, inside_H, axis=0)
+        new_dist_matrix = distance_matrix(new_cluster)
+        new_dbscan = DBSCAN(eps=EPS, min_samples=MINPTS, metric="precomputed")
+        new_dbscan.fit_predict(new_dist_matrix)
+
+        new_core_indices = new_dbscan.core_sample_indices_
+        new_core_points = new_cluster[new_core_indices]
+        new_border_indices = np.setdiff1d(
+            np.array(range(len(new_cluster))), new_core_indices
+        )
+        new_border_points = new_cluster[new_border_indices]
+
         # plt.scatter(points[:, 0], points[:, 1], s=5)
 
-        plt.scatter(core_points[:, 0], core_points[:, 1], c="orange", s=5)
-        plt.scatter(border_points[:, 0], border_points[:, 1], c="blue", s=5)
+        plt.scatter(new_core_points[:, 0], new_core_points[:, 1], s=5)
+        plt.scatter(new_border_points[:, 0], new_border_points[:, 1], c="blue", s=5)
 
     plt.axvline(x=0, color="black", linewidth=0.8)
     plt.axvline(x=80, color="black", linewidth=0.8)
