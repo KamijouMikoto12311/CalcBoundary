@@ -6,5 +6,6 @@
 *.png
 s*/
 r*/
+temp/
 imgs/
 .DS_Store
