@@ -9,8 +9,8 @@ import re
 import warnings
 
 
-EPS = 2.0
-MINPTS = 8
+EPS = 2.15
+MINPTS = 7
 TIMESTEP = 0.01
 DCDNAME = "traj.dcd"
 
