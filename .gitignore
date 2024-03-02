@@ -2,6 +2,9 @@
 *.xyz
 *.xml
 *.dat
+*.gif
+*.png
 s*/
 r*/
+imgs/
 .DS_Store
