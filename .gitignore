@@ -4,8 +4,9 @@
 *.dat
 *.gif
 *.png
+*.log
 s*/
 r*/
 temp/
-imgs/
+*imgs/
 .DS_Store

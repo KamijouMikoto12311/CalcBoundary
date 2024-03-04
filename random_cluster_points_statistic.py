@@ -1,18 +1,28 @@
+#!/opt/homebrew/anaconda3/envs/mda_env/bin/python
+##* Clustering the points of all the frames of a given random trajectory directory
+##* Using the method of DBSCAN
+##* Count the average elements of clusters of a random conformation ot help exclude small clusters
+##* Output the average elements of clusters of the conformation from given trajectory
+
+
 import MDAnalysis as mda
 import numba as nb
 import numpy as np
 import xml.etree.ElementTree as et
 from sklearn.cluster import DBSCAN
+from sklearn.manifold import MDS
 import matplotlib.pyplot as plt
+import alphashape
 import os
 import re
 import warnings
 
 
-EPS = 2.15
-MINPTS = 7
+EPS = 2.1
+MINPTS = 5
 TIMESTEP = 0.01
 DCDNAME = "traj.dcd"
+wdir = "src_random"
 
 
 warnings.filterwarnings("ignore")
@@ -100,44 +110,36 @@ def find_H_in_C_cluster(c_xy, h_xy):
 
 
 currentdir = os.getcwd()
-wdirs = [
-    f for f in os.listdir(currentdir) if (os.path.isdir(f) and re.match(r"[sr]\d+", f))
+xmls = [
+    xml
+    for xml in os.listdir(os.path.join(currentdir, wdir))
+    if re.match(r"cpt\.\d+\.xml", xml)
 ]
-wdirs.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
-if len(wdirs) == 0:
-    raise Exception("Wrong working directory!")
+xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
+xml = os.path.join(currentdir, wdir, xmls[-1])
+dcd = os.path.join(currentdir, wdir, DCDNAME)
+path_to_perimeter_data = os.path.join(currentdir, wdir, "perimeterByDistance.dat")
 
-numdir = 0
-for wdir in wdirs:
-    xmls = [
-        xml
-        for xml in os.listdir(os.path.join(currentdir, wdir))
-        if re.match(r"cpt\.\d+\.xml", xml)
-    ]
-    xmls.sort(key=lambda x: int(re.split(r"(\d+)", x)[1]))
-    xml = os.path.join(currentdir, wdir, xmls[-1])
-    dcd = os.path.join(currentdir, wdir, DCDNAME)
-    path_to_perimeter_data = os.path.join(currentdir, wdir, "perimeterByDistance.dat")
+tree = et.parse(xml)
+root = tree.getroot()
+box = root.find(".//box")
+lx = float(box.get("lx"))
+ly = float(box.get("ly"))
+lz = float(box.get("lz"))
+box_size = np.array([lx, ly, lz], dtype=float)
+half_box_size = np.array([0.5 * lx, 0.5 * ly, 0.5 * lz], dtype=float)
 
-    tree = et.parse(xml)
-    root = tree.getroot()
-    box = root.find(".//box")
-    lx = float(box.get("lx"))
-    ly = float(box.get("ly"))
-    lz = float(box.get("lz"))
-    box_size = np.array([lx, ly, lz], dtype=float)
-    half_box_size = np.array([0.5 * lx, 0.5 * ly, 0.5 * lz], dtype=float)
+U = mda.Universe(xml, dcd)
+C = U.select_atoms("type C")
+O = U.select_atoms("type O")
+O1 = U.select_atoms("type O1")
+H = U.select_atoms("type H")
+T = U.select_atoms("type T")
+T1 = U.select_atoms("type T1")
+t = 0
+global_tot_pts_in_clusters = 0
 
-    U = mda.Universe(xml, dcd)
-    C = U.select_atoms("type C")
-    O = U.select_atoms("type O")
-    O1 = U.select_atoms("type O1")
-    H = U.select_atoms("type H")
-    T = U.select_atoms("type T")
-    T1 = U.select_atoms("type T1")
-    t = 1000 * numdir
-
-    ts = 1
+for ts in U.trajectory[1:]:
     t += 1
     Cxyz = C.positions
     Oxyz = O.positions
@@ -157,50 +159,35 @@ for wdir in wdirs:
     qualified_C_xy = qualified_C[:, :2]
     qualified_H_xy = qualified_H[:, :2]
 
-    # for point in qualified_C_xy:
-    #     if point[1] > 40:
-    #         point[1] -= 80
-
     dist_matrix = distance_matrix(qualified_C_xy)
 
+    ###* Use DBSCAN to find clusters exclude noise *###
     dbscan = DBSCAN(eps=EPS, min_samples=MINPTS, metric="precomputed")
     clusters = dbscan.fit_predict(dist_matrix)
-
+    global_core_indices = dbscan.core_sample_indices_
     label_set = set(dbscan.labels_)
     label_set.remove(-1)
-    core_indices = dbscan.core_sample_indices_
 
+    ###* Process every cluster by label *###
+    tot_pts_in_clusters = 0
     for label in label_set:
         index_of_points = np.where(dbscan.labels_ == label)[0]
-        core_index = np.intersect1d(index_of_points, core_indices)
+        core_index = np.intersect1d(index_of_points, global_core_indices)
         border_index = np.setdiff1d(index_of_points, core_index)
 
-        points = qualified_C_xy[index_of_points]
+        cluster = qualified_C_xy[index_of_points]
         core_points = qualified_C_xy[core_index]
         border_points = qualified_C_xy[border_index]
 
-        inside_H_index = find_H_in_C_cluster(points, qualified_H_xy)
+        ###* Insert H into C cluster *###
+        inside_H_index = find_H_in_C_cluster(cluster, qualified_H_xy)
         inside_H = qualified_H_xy[inside_H_index]
 
-        new_cluster = np.append(points, inside_H, axis=0)
-        new_dist_matrix = distance_matrix(new_cluster)
-        new_dbscan = DBSCAN(eps=EPS, min_samples=MINPTS, metric="precomputed")
-        new_dbscan.fit_predict(new_dist_matrix)
+        new_cluster = np.append(cluster, inside_H, axis=0)
+        tot_pts_in_clusters += len(new_cluster)
 
-        new_core_indices = new_dbscan.core_sample_indices_
-        new_core_points = new_cluster[new_core_indices]
-        new_border_indices = np.setdiff1d(
-            np.array(range(len(new_cluster))), new_core_indices
-        )
-        new_border_points = new_cluster[new_border_indices]
+    mean_pts_in_cluster = tot_pts_in_clusters / len(label_set)
+    global_tot_pts_in_clusters += mean_pts_in_cluster
 
-        # plt.scatter(points[:, 0], points[:, 1], s=5)
-
-        plt.scatter(new_core_points[:, 0], new_core_points[:, 1], s=5)
-        plt.scatter(new_border_points[:, 0], new_border_points[:, 1], c="blue", s=5)
-
-    plt.axvline(x=0, color="black", linewidth=0.8)
-    plt.axvline(x=80, color="black", linewidth=0.8)
-    plt.axhline(y=0, color="black", linewidth=0.8)
-    plt.axhline(y=80, color="black", linewidth=0.8)
-    plt.show()
+global_mean_pts_in_cluster = global_tot_pts_in_clusters / t
+print(global_mean_pts_in_cluster)
