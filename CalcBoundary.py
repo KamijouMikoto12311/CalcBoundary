@@ -4,10 +4,7 @@ import numpy as np
 import xml.etree.ElementTree as et
 import matplotlib.pyplot as plt
 from sklearn.cluster import DBSCAN
-from sklearn.manifold import MDS
-from datetime import datetime
 import alphashape
-import imageio
 import os
 import re
 import warnings
@@ -115,11 +112,19 @@ def find_H_in_C_cluster(c_xy, h_xy):
             if distance < EPS:
                 neighbor_count += 1
 
-        if neighbor_count > MINPTS:
+        if neighbor_count >= MINPTS:
             inside_h_index[found] = i
             found += 1
 
     return inside_h_index[:found]
+
+
+@nb.njit
+def make_continuous_cluster(cluster_points):
+    for i in range(1, len(cluster_points)):
+        r = cluster_points[i] - cluster_points[i - 1]
+        apply_min_img(r)
+        cluster_points[i] = cluster_points[i - 1] + r
 
 
 currentdir = os.getcwd()
@@ -216,16 +221,10 @@ for wdir in wdirs:
             inside_H_index = find_H_in_C_cluster(points_in_this_cluster, qualified_H_xy)
             inside_H = qualified_H_xy[inside_H_index]
             new_cluster = np.append(points_in_this_cluster, inside_H, axis=0)
-            new_dist_matrix = distance_matrix(new_cluster)
-
-            ###* Use Multidimensional Scaling (MDS) to transform dist_matrix to continuous points *###
-            ###! The transformed points' centroid is (0, 0) !###
-            ###* Deals with the peridic boundary condition (PBC) *###
-            mds = MDS(n_components=2, dissimilarity="precomputed", random_state=42)
-            continuous_new_cluster = mds.fit_transform(new_dist_matrix)
+            make_continuous_cluster(new_cluster)
 
             ###* Use alphashape to find the border points of the cluster and plot them separately *###
-            alpha_shape = alphashape.alphashape(continuous_new_cluster, alpha=0.5)
+            alpha_shape = alphashape.alphashape(new_cluster, alpha=0.5)
             perimeter += alpha_shape.length
 
             plt.scatter(new_cluster[:, 0], new_cluster[:, 1], s=6)
@@ -234,6 +233,8 @@ for wdir in wdirs:
         plt.axvline(x=80, color="black")
         plt.axhline(y=0, color="black")
         plt.axhline(y=80, color="black")
+        plt.xlim([-40, 120])
+        plt.ylim([-40, 120])
         plt.savefig(f"{imgdir}/{t}.png", format="png")
         plt.close()
 
@@ -241,9 +242,3 @@ for wdir in wdirs:
             f.write(f"{t}\t{perimeter}\n")
 
     numdir += 1
-
-images = []
-for i in range(t):
-    filename = f"{imgdir}/{t}.png"
-    images.append(imageio.imread(filename))
-imageio.mimsave(f"{currentdir}/traj_cluster.gif", images, fps=20)
