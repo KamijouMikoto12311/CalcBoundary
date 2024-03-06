@@ -19,7 +19,7 @@ EPS = 2.15
 MINPTS = 9
 TIMESTEP = 0.01
 DCDNAME = "traj.dcd"
-wdir = "src_cross_boundary"
+wdir = "s01"
 
 
 warnings.filterwarnings("ignore")
@@ -133,10 +133,8 @@ O1 = U.select_atoms("type O1")
 H = U.select_atoms("type H")
 T = U.select_atoms("type T")
 T1 = U.select_atoms("type T1")
-t = 0
 
-ts = 1
-t += 1
+U.trajectory[1]
 Cxyz = C.positions
 Oxyz = O.positions
 O1xyz = O1.positions
@@ -199,5 +197,8 @@ plt.axvline(x=0, color="black", linewidth=0.8)
 plt.axvline(x=80, color="black", linewidth=0.8)
 plt.axhline(y=0, color="black", linewidth=0.8)
 plt.axhline(y=80, color="black", linewidth=0.8)
+plt.xlim([0, 80])
+plt.ylim([0, 80])
+
 
 plt.savefig(f"single_frame_integrated.png", format="png")

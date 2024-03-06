@@ -18,7 +18,7 @@ import warnings
 
 
 EPS = 2.15
-MINPTS = 8
+MINPTS = 9
 TIMESTEP = 0.01
 DCDNAME = "traj.dcd"
 wdir = "src_cross_boundary"
