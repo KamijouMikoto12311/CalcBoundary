@@ -28,8 +28,9 @@ rsync -alu ${SLURM_SUBMIT_HOST}:${SLURM_SUBMIT_DIR}/* $SLURM_COMPUTE_DIR
 ## run the simulation under compute dir ##
 cd $SLURM_COMPUTE_DIR || exit
 python3 ${PY_FILE} >run.log
-for f in [sr]*/; do
-  tail -n 1000 "$f"/perimeter.dat >>perimeter.dat
+for dir in $(find . -maxdepth 1 -type d -name "s*" | sort -n); do
+  tail -n 1000 $dir/perimeter.dat >perimeter.dat
+  echo "Processing directory: $dir"
 done
 
 ## save complete time ##

@@ -138,7 +138,7 @@ T = U.select_atoms("type T")
 T1 = U.select_atoms("type T1")
 t = 0
 
-ts = 1
+U.trajectory[1]
 t += 1
 Cxyz = C.positions
 Oxyz = O.positions
@@ -193,7 +193,7 @@ for label in label_set:
     ###* Use alphashape to find the border points of the cluster and plot them separately *###
     alpha_shape = alphashape.alphashape(continuous_new_cluster, alpha=0.5)
     alpha_border_points = np.array(alpha_shape.exterior.coords)
-    perimeter=alpha_shape.length
+    perimeter = alpha_shape.length
     print(perimeter)
 
     plt.scatter(
