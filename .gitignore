@@ -5,3 +5,5 @@
 s*/
 r*/
 .DS_Store
+*.png
+*.gif
