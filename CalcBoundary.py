@@ -112,7 +112,7 @@ def find_H_in_C_cluster(c_xy, h_xy):
             if distance < EPS:
                 neighbor_count += 1
 
-        if neighbor_count > MINPTS:
+        if neighbor_count >= MINPTS:
             inside_h_index[found] = i
             found += 1
 
